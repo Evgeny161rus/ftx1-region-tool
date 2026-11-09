@@ -1,7 +1,6 @@
 # FTX-1 Region / EEPROM Tool
 
-> **Программа радиолюбителя с позывным R6AAF**  
-> **Program by a radio amateur with callsign R6AAF**
+> **by R6AAF**
 
 Инструмент для Yaesu **FTX-1**: чтение и запись служебной EEPROM через CAT,
 дамп EEPROM и смена региона (destination code), включая «широкие» коды
@@ -101,7 +100,7 @@ python ftx1_region.py
 
 ```
 FTX-1: регионы и EEPROM
-радиолюбитель R6AAF / radio amateur R6AAF
+by R6AAF
 
   1  info    текущий регион, прошивка, диапазоны
   2  dump    дамп EEPROM (первые 4 КБ, ~50 с)
@@ -116,7 +115,7 @@ English:
 
 ```
 FTX-1: regions and EEPROM
-radio amateur R6AAF / радиолюбитель R6AAF
+by R6AAF
 
   1  info    current region, firmware, TX ranges
   2  dump    back up EEPROM (first 4 KiB, ~50 s)
