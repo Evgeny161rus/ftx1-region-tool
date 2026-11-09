@@ -1,0 +1,16 @@
+# EEPROM dumps and backups contain radio-specific data
+backups/
+dumps/
+*.bin
+*.bin.txt
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Saved interface language
+.ftx1_region_lang
+
+# OS noise
+Thumbs.db
+.DS_Store
