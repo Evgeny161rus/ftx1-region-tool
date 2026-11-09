@@ -3,6 +3,13 @@
 """
 ftx1_region.py - FTX-1 EEPROM / region tool over CAT.
 
+Program by a radio amateur with callsign R6AAF.
+Программа радиолюбителя с позывным R6AAF.
+
+Provided "as is", without warranty of any kind.
+Предоставляется «как есть», без каких-либо гарантий.
+Use at your own risk / используйте на свой риск.
+
 Reads and writes the FTX-1 settings EEPROM through the undocumented
 service commands SPR / SPW that are implemented in MAIN firmware but
 missing from the CAT manual.  The destination (region) code lives at
@@ -194,6 +201,7 @@ STRINGS = {
 
         # menu
         "menu.title": "FTX-1: регионы и EEPROM",
+        "menu.author": "радиолюбитель R6AAF / radio amateur R6AAF",
         "menu.item.info": "  1  info    текущий регион, прошивка, диапазоны",
         "menu.item.dump": "  2  dump    дамп EEPROM (первые 4 КБ, ~50 с)",
         "menu.item.list": "  3  list    таблица регионов",
@@ -209,7 +217,7 @@ STRINGS = {
         # main / argparse
         "main.description":
             "FTX-1: EEPROM и регион через CAT (SPR/SPW). "
-            "Запуск без команды открывает меню.",
+            "Запуск без команды открывает меню. Радиолюбитель R6AAF.",
         "main.epilog": "Коды регионов: python ftx1_region.py list",
         "main.cat_error": "ошибка CAT: {err}",
         "main.interrupted": "\nпрервано",
@@ -364,6 +372,7 @@ STRINGS = {
 
         # menu
         "menu.title": "FTX-1: regions and EEPROM",
+        "menu.author": "radio amateur R6AAF / радиолюбитель R6AAF",
         "menu.item.info": "  1  info    current region, firmware, TX ranges",
         "menu.item.dump": "  2  dump    back up EEPROM (first 4 KiB, ~50 s)",
         "menu.item.list": "  3  list    all known region codes",
@@ -379,7 +388,8 @@ STRINGS = {
         # main / argparse
         "main.description":
             "FTX-1 EEPROM / region tool over CAT (SPR/SPW). "
-            "Run without a command for the interactive menu.",
+            "Run without a command for the interactive menu. "
+            "By radio amateur R6AAF.",
         "main.epilog": "Region codes: run 'python ftx1_region.py list'",
         "main.cat_error": "CAT error: {err}",
         "main.interrupted": "\ninterrupted",
@@ -1384,6 +1394,7 @@ def menu_text() -> str:
     return "\n".join([
         "",
         T("menu.title"),
+        T("menu.author"),
         "",
         T("menu.item.info"),
         T("menu.item.dump"),

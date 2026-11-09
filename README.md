@@ -1,5 +1,8 @@
 # FTX-1 Region / EEPROM Tool
 
+> **Программа радиолюбителя с позывным R6AAF**  
+> **Program by a radio amateur with callsign R6AAF**
+
 Инструмент для Yaesu **FTX-1**: чтение и запись служебной EEPROM через CAT,
 дамп EEPROM и смена региона (destination code), включая «широкие» коды
 MARS/CAP.
@@ -9,17 +12,40 @@ MARS/CAP.
 
 ---
 
-## ⚠️ Прочитайте перед использованием
+## Отказ от ответственности / Disclaimer
+
+**Русский.** Программа предоставляется «как есть», без каких-либо гарантий,
+явных или подразумеваемых. Автор не несёт ответственности за любой ущерб,
+потерю данных, выход из строя радио, нарушение местных законов или условий
+лицензии, возникшие в результате использования программы. Вы используете её
+на свой страх и риск и самостоятельно отвечаете за соблюдение правил
+радиосвязи в своей стране.
+
+**English.** This software is provided "as is", without warranty of any kind,
+express or implied. The author is not liable for any damage, data loss, radio
+malfunction, or violation of local laws or licence terms resulting from the use
+of this program. You use it at your own risk and are solely responsible for
+complying with the radio regulations of your country.
+
+---
+
+## ⚠️ Прочитайте перед использованием / Read before use
 
 - Передавать можно **только** там, где это разрешено вашей лицензией.
+  *Transmit **only** where your licence permits it.*
 - Смена региона может нарушать типовое одобрение (type approval) и условия
   гарантии.
+  *Changing the region may violate type approval and warranty terms.*
 - Запись идёт в служебную EEPROM. Перед первой записью **обязательно** сделайте
   дамп: `python ftx1_region.py dump`.
+  *Always make a dump before the first write.*
 - Калибровочная таблица лежит рядом (`0x000A..0x0108`). Инструмент её не
   трогает, но команда `write` умеет писать любой байт — не используйте её
   вслепую.
+  *The calibration table sits nearby. The tool does not touch it, but `write`
+  can change any byte — do not use it blindly.*
 - Автор не несёт ответственности за испорченное оборудование.
+  *The author is not liable for damaged equipment.*
 
 ---
 
@@ -75,6 +101,7 @@ python ftx1_region.py
 
 ```
 FTX-1: регионы и EEPROM
+радиолюбитель R6AAF / radio amateur R6AAF
 
   1  info    текущий регион, прошивка, диапазоны
   2  dump    дамп EEPROM (первые 4 КБ, ~50 с)
@@ -89,6 +116,7 @@ English:
 
 ```
 FTX-1: regions and EEPROM
+radio amateur R6AAF / радиолюбитель R6AAF
 
   1  info    current region, firmware, TX ranges
   2  dump    back up EEPROM (first 4 KiB, ~50 s)
