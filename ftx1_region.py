@@ -1773,19 +1773,52 @@ def cmd_probe(args) -> int:
 # --------------------------------------------------------------------------
 def menu_text() -> str:
     rn = radio_name()
+    if LANG == "en":
+        return "\n".join([
+            "",
+            "  %s: EEPROM / region tool" % rn,
+            "  by R6AAF",
+            "",
+            "  1  info   current region, firmware, TX ranges",
+            "  2  dump   quick backup (first 4 KiB)",
+            "  3  list   known region codes",
+            "  4  set    change region",
+            "  5  ports  serial ports",
+            "  6  lang   change language / сменить язык",
+            "  7  full   full EEPROM dump (takes time)",
+            "  0  exit",
+            "",
+        ])
+    if LANG == "both":
+        return "\n".join([
+            "",
+            "  %s: EEPROM / region  |  EEPROM / регион" % rn,
+            "  by R6AAF",
+            "",
+            "  1  info   current region / текущий регион",
+            "  2  dump   quick backup, 4 KiB / быстрый дамп, 4 КиБ",
+            "  3  list   region codes / коды регионов",
+            "  4  set    change region / сменить регион",
+            "  5  ports  serial ports / COM-порты",
+            "  6  lang   language / язык",
+            "  7  full   full EEPROM dump / полный дамп EEPROM (занимает время)",
+            "  0  exit   выход",
+            "",
+        ])
+    # ru (default)
     return "\n".join([
         "",
-        "  %s: EEPROM / region  |  EEPROM / регион" % rn,
+        "  %s: EEPROM / регион" % rn,
         "  by R6AAF",
         "",
-        "  1  info   current region / текущий регион",
-        "  2  dump   quick backup, 4 KiB / быстрый дамп, 4 КиБ",
-        "  3  list   region codes / коды регионов",
-        "  4  set    change region / сменить регион",
-        "  5  ports  serial ports / COM-порты",
-        "  6  lang   language / язык",
-        "  7  full   full EEPROM dump / полный дамп EEPROM (занимает время)",
-        "  0  exit   выход",
+        "  1  info   текущий регион, прошивка, диапазоны TX",
+        "  2  dump   быстрый дамп (первые 4 КиБ)",
+        "  3  list   таблица регионов",
+        "  4  set    сменить регион",
+        "  5  ports  список COM-портов",
+        "  6  lang   сменить язык / change language",
+        "  7  full   полный дамп EEPROM (занимает время)",
+        "  0  выход",
         "",
     ])
 
