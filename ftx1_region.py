@@ -206,10 +206,11 @@ STRINGS = {
         "menu.item.list": "  3  list    таблица регионов",
         "menu.item.set": "  4  set     выбрать и записать регион",
         "menu.item.ports": "  5  ports   список COM-портов",
+        "menu.item.dumpfull": "  7  full    полный дамп EEPROM (занимает время)",
         "menu.item.lang": "  6  lang    сменить язык / change language",
         "menu.item.exit": "  0  выход",
         "menu.prompt": "\nвыбор> ",
-        "menu.bad_choice": "нет такого пункта, введите 1-6 или 0",
+        "menu.bad_choice": "нет такого пункта, введите 1-7 или 0",
         "menu.cat_error": "ошибка CAT: {err}",
         "menu.interrupted": "\nпрервано, возврат в меню",
 
@@ -377,10 +378,11 @@ STRINGS = {
         "menu.item.list": "  3  list    all known region codes",
         "menu.item.set": "  4  set     choose a region and write it",
         "menu.item.ports": "  5  ports   list serial ports",
+        "menu.item.dumpfull": "  7  full    full EEPROM dump (takes time)",
         "menu.item.lang": "  6  lang    change language / сменить язык",
         "menu.item.exit": "  0  exit",
         "menu.prompt": "\nchoice> ",
-        "menu.bad_choice": "unknown choice, enter 1-6 or 0",
+        "menu.bad_choice": "unknown choice, enter 1-7 or 0",
         "menu.cat_error": "CAT error: {err}",
         "menu.interrupted": "\ninterrupted, back to menu",
 
@@ -604,16 +606,88 @@ import serial  # noqa: E402
 from serial.tools import list_ports  # noqa: E402
 
 # --------------------------------------------------------------------------
-# Hardware constants (FTX-1 MAIN V01.13)
+# Hardware constants / radio profiles
 # --------------------------------------------------------------------------
-REGION_ADDR = 0x0109       # u16 big-endian
-REGION_FLAG_ADDR = 0x010B  # 1 byte, meaning unknown - never touched
-HEADER_LEN = 0x0200        # bytes backed up automatically before a write
-MAX_ADDR = 0xFFFF          # SPR/SPW use a 16-bit address
+HEADER_LEN = 0x0200        # bytes backed up automatically before a write (FTX-1)
 DEFAULT_BAUD = 38400
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DUMP_DIR = os.path.join(BASE_DIR, "dumps")
 BACKUP_DIR = os.path.join(BASE_DIR, "backups")
+
+RADIO_PROFILES = {
+    "ftx1": {
+        "name": "FTX-1",
+        "region_addr": 0x0109,
+        "region_flag_addr": 0x010B,
+        "max_addr": 0xFFFF,
+        "eeprom_size": 0x10000,
+        "dump_default": 0x1000,
+        "can_set": True,
+        "can_write": True,
+        "id_prefix": "ID",
+        "full_backup": False,
+    },
+    "ft710": {
+        "name": "FT-710",
+        "region_addr": 0x010F,
+        "region_flag_addr": 0x0111,  # 4K flag
+        "max_addr": 0x7FFF,         # BR25G256 = 32 KiB
+        "eeprom_size": 0x8000,
+        "dump_default": 0x1000,
+        "can_set": True,
+        "can_write": True,
+        "id_prefix": "ID0710",
+        "full_backup": True,        # always back up full EEPROM
+    },
+}
+
+RADIO = "ftx1"
+REGION_ADDR = RADIO_PROFILES[RADIO]["region_addr"]
+REGION_FLAG_ADDR = RADIO_PROFILES[RADIO]["region_flag_addr"]
+MAX_ADDR = RADIO_PROFILES[RADIO]["max_addr"]
+
+
+def set_radio(key: str) -> None:
+    global RADIO, REGION_ADDR, REGION_FLAG_ADDR, MAX_ADDR
+    if key not in RADIO_PROFILES:
+        raise SystemExit("unknown radio: %s" % key)
+    RADIO = key
+    p = RADIO_PROFILES[key]
+    REGION_ADDR = p["region_addr"]
+    REGION_FLAG_ADDR = p["region_flag_addr"]
+    MAX_ADDR = p["max_addr"]
+
+
+def radio_name() -> str:
+    return RADIO_PROFILES[RADIO]["name"]
+
+
+def select_radio_interactive() -> None:
+    """Ask user to choose transceiver. Default: FTX-1."""
+    msg = ("\n  +------------------------------------------+\n"
+           "  |  Трансивер / Transceiver                 |\n"
+           "  |                                          |\n"
+           "  |  1  FTX-1   (SPR/SPW, смена региона)     |\n"
+           "  |  2  FT-710  (dump/probe/смена региона)   |\n"
+           "  |  0  exit                                 |\n"
+           "  +------------------------------------------+\n")
+    _write(sys.stdout, msg)
+    while True:
+        _write(sys.stdout, "\nradio> ")
+        sys.stdout.flush()
+        line = sys.stdin.readline()
+        if not line:
+            raise SystemExit(0)
+        c = line.strip().lower()
+        if c in ("", "1", "ftx1", "ftx-1"):
+            set_radio("ftx1")
+            return
+        if c in ("2", "ft710", "ft-710"):
+            set_radio("ft710")
+            return
+        if c in ("0", "q", "exit", "quit"):
+            raise SystemExit(0)
+        _write(sys.stdout, "  1 = FTX-1, 2 = FT-710, 0 = exit\n")
 
 # Destination codes decoded from the tx_freq_allowed dispatcher
 # (MAIN V01.13, compare chain at 0xFFEC7FBB, tables 0xFFE96474..0xFFE967C4).
@@ -817,6 +891,24 @@ def fmt_range(lo: int, hi: int) -> str:
         return "%9.4f - %9.4f %s" % (lo / 1e6, end / 1e6, mhz)
     return "%9.1f - %9.1f %s" % (lo / 1e3, end / 1e3, khz)
 
+
+
+def tx_rows_for_radio(rows):
+    """Filter TX ranges to what the selected radio can actually transmit."""
+    if not rows:
+        return rows
+    if RADIO == "ft710":
+        # FT-710 is HF/50 MHz only (no 4m/2m/70cm)
+        out = []
+        for lo, hi in rows:
+            if lo >= 60000000:
+                continue
+            if hi > 54000001:
+                hi = 54000001
+            if lo < hi:
+                out.append((lo, hi))
+        return out
+    return list(rows)
 
 # -- pretty output ---------------------------------------------------------
 def _enc_ok(text: str) -> bool:
@@ -1156,14 +1248,16 @@ def cmd_info(args) -> int:
         if info is None:
             say("")
             say(T("info.unknown_warn"))
-        elif info["rows"]:
-            say("")
-            say(T("info.tx_ranges", n=len(info["rows"])))
-            for line in boxed([fmt_range(lo, hi) for lo, hi in info["rows"]]):
-                say(line)
         else:
-            say("")
-            say(T("info.no_tx"))
+            rows = tx_rows_for_radio(info.get("rows") or [])
+            if rows:
+                say("")
+                say(T("info.tx_ranges", n=len(rows)))
+                for line in boxed([fmt_range(lo, hi) for lo, hi in rows]):
+                    say(line)
+            else:
+                say("")
+                say(T("info.no_tx"))
     return 0
 
 
@@ -1211,7 +1305,7 @@ def dump_range(cat: FtCat, start: int, length: int, out_path: str,
     out_path = os.path.abspath(out_path)
     meta = out_path + ".txt"
     with open(meta, "w", encoding="utf-8") as f:
-        f.write("FTX-1 EEPROM dump\n")
+        f.write("%s EEPROM dump\n" % radio_name())
         f.write("date    : %s\n" % datetime.now().isoformat(timespec="seconds"))
         f.write("port    : %s\n" % cat.port)
         f.write("ID      : %s\n" % cat.identify())
@@ -1276,6 +1370,7 @@ def cmd_set(args) -> int:
     if info is None and not args.force:
         raise SystemExit(T("set.unknown_force", code=code))
 
+    prof = RADIO_PROFILES[RADIO]
     port = find_port(args.port)
     with FtCat(port, args.baud) as cat:
         say(T("set.port", port=port))
@@ -1297,20 +1392,44 @@ def cmd_set(args) -> int:
               name=info["name"] if info else T("set.unknown_name")))
         if info:
             say_field(T("set.desc_label"), describe(code))
-            if info["rows"]:
-                for line in boxed([fmt_range(lo, hi) for lo, hi in info["rows"]]):
-                    say(line)
+            if info.get("rows"):
+                rows = tx_rows_for_radio(info["rows"])
+                if rows:
+                    for line in boxed([fmt_range(lo, hi) for lo, hi in rows]):
+                        say(line)
 
         if args.dry_run:
             say(T("set.dry_run"))
             return 0
 
+        if RADIO == "ft710":
+            if LANG == "ru":
+                say("")
+                say("FT-710: будет записан регион 0x%04X/0x%04X (SPW). Для 0x315B дополнительно JP0710315BCEA4;." %
+                    (REGION_ADDR, REGION_ADDR + 1))
+                say("По дампу до/после (CHINA->B2EU) меняются только регион и байт 0x0008 (обновляется автоматически).")
+            else:
+                say("")
+                say("FT-710: will write region at 0x%04X/0x%04X (SPW). For 0x315B also JP0710315BCEA4;." %
+                    (REGION_ADDR, REGION_ADDR + 1))
+                say("Before/after dump (CHINA->B2EU): only region bytes and 0x0008 changed (auto-updated).")
+
+        # Backup
         if not args.no_backup:
             os.makedirs(BACKUP_DIR, exist_ok=True)
-            name = os.path.join(BACKUP_DIR, "eeprom_head_%s.bin"
-                                % datetime.now().strftime("%Y%m%d_%H%M%S"))
-            say(T("set.backup", end=HEADER_LEN - 1))
-            data, bad = dump_range(cat, 0x0000, HEADER_LEN, name)
+            if prof.get("full_backup"):
+                backup_len = prof["eeprom_size"]
+                bname = os.path.join(BACKUP_DIR, "eeprom_full_%s_%s.bin"
+                                     % (RADIO, datetime.now().strftime("%Y%m%d_%H%M%S")))
+                say(("\nПолный бэкап EEPROM (0x%04X байт)..." % backup_len)
+                    if LANG == "ru" else
+                    ("\nFull EEPROM backup (0x%04X bytes)..." % backup_len))
+            else:
+                backup_len = HEADER_LEN
+                bname = os.path.join(BACKUP_DIR, "eeprom_head_%s.bin"
+                                     % datetime.now().strftime("%Y%m%d_%H%M%S"))
+                say(T("set.backup", end=backup_len - 1))
+            data, bad = dump_range(cat, 0x0000, backup_len, bname)
             if bad:
                 say(T("set.backup_bad", n=bad))
                 say(T("set.backup_hint"))
@@ -1322,16 +1441,36 @@ def cmd_set(args) -> int:
                       want=expect.hex(" ")))
                 return 5
             say(T("set.rollback", code=cur))
+            say(("Бэкап сохранён: %s" % bname) if LANG == "ru" else ("Backup saved: %s" % bname))
 
+        # Confirmation
         if not args.yes:
             inline(T("set.confirm", code=code,
                      addr_hi=REGION_ADDR, addr_lo=REGION_ADDR + 1))
-            answer = sys.stdin.readline().strip().lower()
-            if answer != "yes":
+            if sys.stdin.readline().strip().lower() != "yes":
                 say(T("set.cancelled"))
                 return 1
 
-        write_region(cat, code)
+        # Write
+        if RADIO == "ft710":
+            say("\nSPW: 0x%04X<=0x%02X, 0x%04X<=0x%02X" %
+                (REGION_ADDR, (code >> 8) & 0xFF, REGION_ADDR + 1, code & 0xFF))
+            try:
+                write_region(cat, code)
+                say("SPW: OK" if LANG == "en" else "SPW: отправлено.")
+            except Exception as e:
+                say("SPW: %s" % e)
+            if code == 0x315B:
+                try:
+                    say("JP 315B: JP0710315BCEA4;")
+                    r = cat._txn(b"JP0710315BCEA4;", 32, 1.5)
+                    rep = r.decode("ascii", "replace").strip() or "(no reply)"
+                    say(("ответ: " + rep) if LANG == "ru" else ("reply: " + rep))
+                except Exception as e:
+                    say("JP: %s" % e)
+        else:
+            write_region(cat, code)
+
         try:
             got, flag2 = read_region_settled(cat)
         except CatError as e:
@@ -1356,6 +1495,9 @@ def cmd_read(args) -> int:
 
 
 def cmd_write(args) -> int:
+    if RADIO == "ft710":
+        say("Внимание: запись произвольных байт EEPROM FT-710. Сделайте полный бэкап." if LANG == "ru"
+            else "Warning: writing arbitrary FT-710 EEPROM bytes. Have a full backup.")
     addr = int(args.addr, 0)
     value = int(args.value, 0)
     if not 0 <= value <= 0xFF:
@@ -1369,7 +1511,11 @@ def cmd_write(args) -> int:
             if sys.stdin.readline().strip().lower() != "yes":
                 say(T("write.cancelled"))
                 return 1
-        cat.spw(addr, value)
+        try:
+            cat.spw(addr, value)
+        except Exception as e:
+            say("SPW error: %s" % e)
+            return 3
         got = None
         for _ in range(4):
             time.sleep(0.3)
@@ -1386,22 +1532,260 @@ def cmd_write(args) -> int:
         return 0 if got == value else 3
 
 
+
+# --------------------------------------------------------------------------
+# FT-710 / offline helpers
+# --------------------------------------------------------------------------
+def cmd_patch(args) -> int:
+    """Offline: patch region (and optional 4K flag) in a dump file."""
+    path = args.file
+    try:
+        with open(path, "rb") as f:
+            data = bytearray(f.read())
+    except OSError:
+        raise SystemExit("cannot open file: %s" % path)
+
+    code = parse_code(args.code)
+    prof = RADIO_PROFILES.get(RADIO, RADIO_PROFILES["ftx1"])
+    if not getattr(args, "radio", None):
+        if len(data) == 0x8000:
+            prof = RADIO_PROFILES["ft710"]
+        elif len(data) > 0x0111:
+            c710 = (data[0x010F] << 8) | data[0x0110]
+            c1 = (data[0x0109] << 8) | data[0x010A]
+            if c710 in REGIONS and c1 not in REGIONS:
+                prof = RADIO_PROFILES["ft710"]
+
+    ra = prof["region_addr"]
+    rf = prof["region_flag_addr"]
+    if len(data) <= rf:
+        raise SystemExit("file too short for region/flag (need >= 0x%04X bytes)" % (rf + 1))
+
+    old_code = (data[ra] << 8) | data[ra + 1]
+    old_flag = data[rf]
+    data[ra] = (code >> 8) & 0xFF
+    data[ra + 1] = code & 0xFF
+    new_flag = old_flag
+    if getattr(args, "flag", None) is not None:
+        new_flag = int(args.flag, 0) & 0xFF
+        data[rf] = new_flag
+
+    out = getattr(args, "out", None)
+    if not out:
+        base, ext = os.path.splitext(path)
+        if not ext:
+            ext = ".bin"
+        out = "%s.patched_%04X%s" % (base, code, ext)
+    out = os.path.abspath(out)
+    with open(out, "wb") as f:
+        f.write(data)
+
+    say("")
+    say("Patch: %s" % os.path.abspath(path))
+    say("  profile : %s (region @0x%04X, flag @0x%04X)" % (prof["name"], ra, rf))
+    say("  region  : 0x%04X (%s) -> 0x%04X (%s)" %
+        (old_code, region_label(old_code), code, region_label(code)))
+    say("  flag    : 0x%02X -> 0x%02X%s" %
+        (old_flag, new_flag, "" if new_flag == old_flag else " (changed)"))
+    say("  sha256  : %s" % hashlib.sha256(data).hexdigest())
+    say("  saved   : %s" % out)
+    say("")
+    if LANG == "ru":
+        say("ВНИМАНИЕ: правится только файл (регион/флаг). Прошивка может проверять")
+        say("регион и другие байты могут отличаться. Заливка — программатором (CH341A).")
+        say("Оригинал сохраните!")
+    else:
+        say("NOTE: file-only patch (region/flag). Firmware may validate region and")
+        say("other bytes may need changes. Flash with a programmer (CH341A). Keep original!")
+    return 0
+
+
+def cmd_hardware(_args) -> int:
+    say("")
+    say("Аппаратный дамп EEPROM FT-710 / FT-710 hardware EEPROM dump")
+    say("")
+    if LANG == "en":
+        say("Chip    : BR25G256 (SPI EEPROM, 256 Kbit = 32 KiB, SOP8)")
+        say("Region  : 0x010F..0x0110 (big-endian), 4K flag: 0x0111")
+        say("Read with CH341A + SOP8 clip as SPI 25-series, 32768 bytes.")
+        say("Take two dumps and compare sha256 before changing anything.")
+        say("Do not apply 5 V to a 3.3 V chip. In-circuit reads can be unstable.")
+    else:
+        say("Микросхема : BR25G256 (SPI EEPROM, 256 Кбит = 32 КиБ, SOP8)")
+        say("Адреса     : 0x0000..0x7FFF")
+        say("Регион     : 0x010F..0x0110 (big-endian), флаг 4K: 0x0111")
+        say("")
+        say("Что нужно: программатор CH341A, зажим SOP8, ПО (AsProgrammer/flashrom).")
+        say("1) Радио выключить, питание/антенну снять.")
+        say("2) Прочитать как SPI 25-series, 32768 байт.")
+        say("3) Снять второй дамп и сравнить sha256.")
+        say("4) Не подавать 5 В на 3.3 В; при нестабильности - выпаять чип.")
+        say("")
+        say("Разбор: python ftx1_region.py --radio ft710 analyze dump.bin [--diff dump2.bin]")
+    return 0
+
+
+def cmd_analyze(args) -> int:
+    path = args.file
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError:
+        raise SystemExit("cannot open file: %s" % path)
+    say("")
+    say("Dump analysis: %s" % os.path.abspath(path))
+    prof = RADIO_PROFILES.get(RADIO, RADIO_PROFILES["ftx1"])
+    if not getattr(args, "radio", None):
+        if len(data) == 0x8000:
+            prof = RADIO_PROFILES["ft710"]
+        elif len(data) > 0x0111:
+            c710 = (data[0x010F] << 8) | data[0x0110]
+            c1 = (data[0x0109] << 8) | data[0x010A]
+            if c710 in REGIONS and c1 not in REGIONS:
+                prof = RADIO_PROFILES["ft710"]
+    esz = prof["eeprom_size"]
+    if len(data) == esz:
+        say("size    : %d bytes" % len(data))
+    else:
+        say("size    : %d bytes (expected %d)" % (len(data), esz))
+    ra = prof["region_addr"]
+    rf = prof["region_flag_addr"]
+    if len(data) > rf:
+        code = (data[ra] << 8) | data[ra + 1]
+        flag = data[rf]
+        say("region  : 0x%04X  (%s)  @0x%04X" % (code, region_label(code), ra))
+        say("4K flag : 0x%02X  @0x%04X" % (flag, rf))
+    else:
+        say("file is too short to contain region area")
+    ff = data.count(0xFF)
+    say("fill    : 0xFF - %d bytes, other - %d bytes" % (ff, len(data) - ff))
+
+    say("\nnon-empty blocks (256 bytes each):")
+    ranges = []
+    for start in range(0, len(data), 0x100):
+        chunk = data[start:start + 0x100]
+        n = sum(1 for b in chunk if b != 0xFF)
+        if not n:
+            continue
+        if ranges and ranges[-1][1] == start - 1:
+            ranges[-1][1] = start + len(chunk) - 1
+            ranges[-1][2] += n
+        else:
+            ranges.append([start, start + len(chunk) - 1, n])
+    if not ranges:
+        say("  none - dump is all 0xFF")
+    for start, end, n in ranges[:40]:
+        say("  0x%04X..0x%04X  %d bytes not 0xFF" % (start, end, n))
+    if len(ranges) > 40:
+        say("  ... %d more ranges" % (len(ranges) - 40))
+
+    if args.diff:
+        try:
+            with open(args.diff, "rb") as f:
+                other = f.read()
+        except OSError:
+            raise SystemExit("cannot open file: %s" % args.diff)
+        say("\nCompared with %s" % os.path.abspath(args.diff))
+        if len(other) != len(data):
+            say("  different sizes: %d and %d" % (len(data), len(other)))
+        diffs = shown = 0
+        limit = max(0, getattr(args, "limit", 64))
+        for addr in range(min(len(data), len(other))):
+            if data[addr] != other[addr]:
+                diffs += 1
+                if shown < limit:
+                    say("  0x%04X: %02X -> %02X" % (addr, data[addr], other[addr]))
+                    shown += 1
+        if not diffs:
+            say("  no differences")
+        else:
+            if diffs > shown:
+                say("  ... %d more (first %d shown)" % (diffs - shown, shown))
+            say("  total differences: %d" % diffs)
+    return 0
+
+
+def cmd_probe(args) -> int:
+    """Read-only probe: ID/VE/JP queries and SPR checks."""
+    port = find_port(args.port)
+    os.makedirs(DUMP_DIR, exist_ok=True)
+    log_path = os.path.join(DUMP_DIR, "probe_%s_%s.log" % (
+        RADIO, datetime.now().strftime("%Y%m%d_%H%M%S")))
+    lines_log = []
+    say("")
+    say("Read-only probe (%s)" % radio_name())
+    say("port: %s" % port)
+
+    text_queries = [b"ID;", b"VE;", b"JP;", b"JP0710;", b"JP0710?;"]
+    spr_addrs = [0x0000, 0x0100, 0x0109, 0x010F, 0x0110, 0x0111]
+    spr_ok = False
+
+    with FtCat(port, args.baud) as cat:
+        try:
+            ident = cat.identify()
+        except CatError as e:
+            say(str(e))
+            return 2
+        say("ID  : %s" % ident)
+        lines_log.append("ID: %s" % ident)
+        try:
+            fw = cat.firmware()
+            say("FW  : %s" % fw)
+            lines_log.append("FW: %s" % fw)
+        except CatError:
+            pass
+
+        say("\n--- text queries ---")
+        for frame in text_queries:
+            r = cat._txn(frame, 64, 1.0)
+            h = r.hex(" ") if r else "(no reply)"
+            asc = "".join(chr(b) if 32 <= b < 127 else "." for b in r)
+            say(">>> %s" % frame.decode("ascii", "replace"))
+            say("<<< %s  |%s|" % (h, asc))
+            lines_log.append(">>> %s" % frame.decode("ascii", "replace"))
+            lines_log.append("<<< %s  |%s|" % (h, asc))
+            time.sleep(0.05)
+
+        say("\n--- SPR probes ---")
+        for addr in spr_addrs:
+            if addr > MAX_ADDR:
+                continue
+            try:
+                v = cat.spr(addr)
+                spr_ok = True
+                say("SPR 0x%04X: OK 0x%02X" % (addr, v))
+                lines_log.append("SPR 0x%04X: OK 0x%02X" % (addr, v))
+            except CatError as e:
+                say("SPR 0x%04X: FAIL %s" % (addr, e))
+                lines_log.append("SPR 0x%04X: FAIL %s" % (addr, e))
+
+    with open(log_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines_log) + "\n")
+    say("\nlog saved: %s" % log_path)
+    if spr_ok:
+        say("SPR works. dump --full is possible.")
+    else:
+        say("SPR did not work. Hardware dump may be required (see 'hardware').")
+    return 0 if spr_ok else 1
+
 # --------------------------------------------------------------------------
 # interactive menu (no subcommand on the command line)
 # --------------------------------------------------------------------------
 def menu_text() -> str:
+    rn = radio_name()
     return "\n".join([
         "",
-        T("menu.title"),
-        T("menu.author"),
+        "  %s: EEPROM / region  |  EEPROM / регион" % rn,
+        "  by R6AAF",
         "",
-        T("menu.item.info"),
-        T("menu.item.dump"),
-        T("menu.item.list"),
-        T("menu.item.set"),
-        T("menu.item.ports"),
-        T("menu.item.lang"),
-        T("menu.item.exit"),
+        "  1  info   current region / текущий регион",
+        "  2  dump   quick backup, 4 KiB / быстрый дамп, 4 КиБ",
+        "  3  list   region codes / коды регионов",
+        "  4  set    change region / сменить регион",
+        "  5  ports  serial ports / COM-порты",
+        "  6  lang   language / язык",
+        "  7  full   full EEPROM dump / полный дамп EEPROM (занимает время)",
+        "  0  exit   выход",
         "",
     ])
 
@@ -1412,10 +1796,29 @@ def menu_args(base, **over):
         port=base.port, baud=base.baud,
         start="0x0000", length="0x1000", full=False, out=None, double=False,
         code=None, yes=False, force=False, dry_run=False, no_backup=False,
-        addr=None, value=None)
+        addr=None, value=None, file=None, diff=None, limit=64, flag=None)
     for key, value in over.items():
         setattr(ns, key, value)
     return ns
+
+
+def cmd_dump_full_menu(args) -> int:
+    prof = RADIO_PROFILES[RADIO]
+    size = prof["eeprom_size"]
+    est_min = size * 0.012 / 60.0
+    if LANG == "ru":
+        say("Полный дамп EEPROM %s: 0x%04X байт." % (radio_name(), size))
+        say("Это займёт примерно %.0f мин (зависит от связи). Не отключайте радио." % max(1, round(est_min)))
+        inline("Продолжить? [y/N]: ")
+    else:
+        say("Full EEPROM dump %s: 0x%04X bytes." % (radio_name(), size))
+        say("This will take about %.0f min (depends on link). Do not disconnect." % max(1, round(est_min)))
+        inline("Continue? [y/N]: ")
+    ans = sys.stdin.readline().strip().lower()
+    if ans not in ("y", "yes", "д", "да"):
+        say(T("set.cancelled") if "set.cancelled" in {} else ("Отменено." if LANG=="ru" else "Cancelled."))
+        return 1
+    return cmd_dump(menu_args(args, full=True))
 
 
 def cmd_menu(args) -> int:
@@ -1431,6 +1834,9 @@ def cmd_menu(args) -> int:
         "set": ("set", lambda: cmd_set(menu_args(args))),
         "5": ("ports", lambda: cmd_ports(args)),
         "ports": ("ports", lambda: cmd_ports(args)),
+        "7": ("dump_full", lambda: cmd_dump_full_menu(args)),
+        "full": ("dump_full", lambda: cmd_dump_full_menu(args)),
+        "dump+": ("dump_full", lambda: cmd_dump_full_menu(args)),
     }
 
     while True:
@@ -1443,7 +1849,7 @@ def cmd_menu(args) -> int:
             if choice:
                 return 0
             continue
-        if choice in ("6", "lang", "language", "язык"):
+        if choice in ("6", "lang", "language"):
             ask_language(save=True)
             say("")
             say(menu_text())
@@ -1456,7 +1862,7 @@ def cmd_menu(args) -> int:
         say("")
         try:
             func()
-        except SystemExit as e:          # e.g. no CAT port found
+        except SystemExit as e:
             if e.code:
                 say(str(e.code))
         except CatError as e:
@@ -1464,12 +1870,15 @@ def cmd_menu(args) -> int:
         except KeyboardInterrupt:
             say(T("menu.interrupted"))
 
-
+# --------------------------------------------------------------------------
 # --------------------------------------------------------------------------
 def main() -> int:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--port", help=T("help.port"))
     common.add_argument("--baud", type=int, default=DEFAULT_BAUD)
+    common.add_argument("--radio", choices=("ftx1", "ft710"),
+                        default=argparse.SUPPRESS,
+                        help="transceiver: ftx1 or ft710")
     common.add_argument("--lang", choices=LANG_VALUES,
                         default=argparse.SUPPRESS, help=T("help.lang"))
 
@@ -1481,6 +1890,8 @@ def main() -> int:
                     help=T("help.port"))
     ap.add_argument("--baud", dest="baud_top", type=int, metavar="BAUD",
                     help=T("help.baud", baud=DEFAULT_BAUD))
+    ap.add_argument("--radio", choices=("ftx1", "ft710"), default=None,
+                    help="transceiver: ftx1 or ft710")
     ap.add_argument("--lang", choices=LANG_VALUES, default=None,
                     help=T("help.lang"))
     sub = ap.add_subparsers(dest="cmd")
@@ -1518,10 +1929,42 @@ def main() -> int:
     p.add_argument("--yes", action="store_true")
     p.set_defaults(func=cmd_write)
 
+    p = sub.add_parser("patch", parents=[common],
+                       help="offline: patch region in a .bin dump (no radio)")
+    p.add_argument("file", help="input .bin dump")
+    p.add_argument("code", help="region code/name, e.g. 315B or USA")
+    p.add_argument("--out", help="output file (default: <file>.patched_<code>.bin)")
+    p.add_argument("--flag", default=None,
+                   help="4K flag byte at 0x0111 (hex, e.g. 0x00). If omitted, keep existing")
+    p.set_defaults(func=cmd_patch)
+
+    sub.add_parser("probe", parents=[common],
+                   help="read-only probe (FT-710): ID/VE/JP/SPR").set_defaults(func=cmd_probe)
+
+    p = sub.add_parser("analyze", parents=[common],
+                       help="analyze a saved .bin dump offline")
+    p.add_argument("file")
+    p.add_argument("--diff", help="second dump to compare")
+    p.add_argument("--limit", type=int, default=64,
+                   help="max differences to print")
+    p.set_defaults(func=cmd_analyze)
+
+    sub.add_parser("hardware", parents=[common],
+                   help="hardware EEPROM dump instructions").set_defaults(func=cmd_hardware)
+
     args = ap.parse_args()
+    if getattr(args, "radio", None):
+        set_radio(args.radio)
+
     if args.cmd is None:
         args.port = args.port_top
         args.baud = args.baud_top or DEFAULT_BAUD
+        if not getattr(args, "radio", None):
+            try:
+                select_radio_interactive()
+            except KeyboardInterrupt:
+                say("")
+                return 0
         try:
             return cmd_menu(args)
         except KeyboardInterrupt:
